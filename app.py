@@ -1,6 +1,6 @@
 # ============================================================
 # SafeHer: Smart Women Safety Analytics Website (Streamlit)
-# Developed by Nikhila
+# Developed by pranitha
 # ============================================================
 
 import streamlit as st
@@ -31,7 +31,7 @@ if TWILIO_ENABLED:
 # HELPER FUNCTIONS
 # ------------------------------
 def load_data():
-    df = pd.read_csv("data/SafeHer_WomenSafety.csv")
+    df = pd.read_csv("SafeHer_WomenSafety.csv")
     df["Risk"] = df["Victims"].apply(lambda x: "High" if x > 40 else ("Medium" if x > 20 else "Low"))
     return df
 
@@ -147,3 +147,4 @@ st.markdown("""
 
 st.markdown("---")
 st.caption("Developed by pranitha| IDS Project 2025 | Streamlit Website")
+
