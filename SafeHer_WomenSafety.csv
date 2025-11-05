@@ -1,0 +1,9 @@
+State,City,Year,Month,Crime_Type,Victims,Latitude,Longitude
+Delhi,Delhi,2023,March,Harassment,45,28.6139,77.2090
+Maharashtra,Mumbai,2023,April,Kidnapping,20,19.0760,72.8777
+Karnataka,Bengaluru,2023,May,Assault,15,12.9716,77.5946
+Uttar Pradesh,Lucknow,2023,June,Harassment,30,26.8467,80.9462
+Tamil Nadu,Chennai,2023,July,Kidnapping,10,13.0827,80.2707
+Delhi,Delhi,2024,January,Assault,50,28.6139,77.2090
+Maharashtra,Pune,2024,February,Harassment,25,18.5204,73.8567
+Karnataka,Mysuru,2024,March,Assault,18,12.2958,76.6394
