@@ -1,4 +1,5 @@
-# app.py — SafeHer with 10 states, State Comparison, Risk Analysis, and Advanced Table Styling
+# app.py — SafeHer with 10 states, State Comparison, Risk Analysis, Advanced Table Styling
+# and CSS-only animated page transitions (landing <-> main) + Story Mode Safety Simulator
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -162,6 +163,74 @@ def set_landing_background():
         max-width: 1000px;
         margin: 40px auto;
     }
+
+    /* -----------------------------
+       Animated page transitions
+       ----------------------------- */
+    .page {
+      opacity: 0;
+      transform: translateY(8px) scale(0.995);
+      animation-fill-mode: forwards;
+      animation-duration: 480ms;
+      animation-timing-function: cubic-bezier(.2,.9,.2,1);
+    }
+
+    /* Fade + up */
+    .fade-in {
+      animation-name: fadeInUp;
+    }
+
+    /* Slide-in from right */
+    .slide-in-right {
+      transform: translateX(24px);
+      animation-name: slideInRight;
+    }
+
+    /* Slide-in from left */
+    .slide-in-left {
+      transform: translateX(-24px);
+      animation-name: slideInLeft;
+    }
+
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(12px) scale(0.995); }
+      to   { opacity: 1; transform: translateY(0px) scale(1); }
+    }
+
+    @keyframes slideInRight {
+      from { opacity: 0; transform: translateX(24px) scale(0.995); }
+      to   { opacity: 1; transform: translateX(0px) scale(1); }
+    }
+
+    @keyframes slideInLeft {
+      from { opacity: 0; transform: translateX(-24px) scale(0.995); }
+      to   { opacity: 1; transform: translateX(0px) scale(1); }
+    }
+
+    /* Make sure Streamlit's containers don't override transition visuals */
+    .stContainer, .stApp, .main {
+      transition: none !important;
+    }
+
+    /* Improved Enter button on landing for visibility */
+    .landing-overlay .stButton>button {
+        background-color: #e91e63; /* Bright Magenta */
+        color: white;
+        border: none;
+        padding: 12px 26px;
+        font-size: 18px;
+        font-weight: 700;
+        border-radius: 10px;
+        box-shadow: 0 10px 24px rgba(0,0,0,0.18);
+    }
+    .landing-overlay .stButton>button:hover {
+        background-color: #c2185b;
+    }
+
+    @media (max-width: 640px) {
+      .landing-overlay { margin: 20px; padding: 18px; }
+      .landing-overlay .stButton>button { width: 90% !important; }
+    }
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
@@ -203,7 +272,7 @@ LANGS = {
         "select_state": "రాష్ట్రం ఎంచుకోండి",
         "upload_csv": "CSV అప్లోడ్ చేయండి (ఐచ్ఛికం)",
         "panic": "పేనిక్ బటన్",
-        "panic_confirm": "విపత్తు హెచ్చరిక (UI మాత్రమే) ప్రారంభమైంది!",
+        "panic_confirm": "విపత్తु హెచ్చరిక (UI మాత్రమే) ప్రారంభమైంది!",
         "summary": "సారాంశం",
         "trends": "సమయానికి సంబంధించిన ధోరణులు",
         "interactive_table": "ఇంటరాక్టివ్ పట్టిక",
@@ -226,38 +295,23 @@ if "lang" not in st.session_state:
 # Landing page
 # -----------------------
 def landing_page():
-    # CUSTOM CSS FOR BUTTON VISIBILITY
-    st.markdown("""
-    <style>
-    /* Targeting the primary button on the landing page for high contrast */
-    .landing-overlay .stButton>button {
-        background-color: #e91e63; /* Bright Magenta */
-        color: white; /* White text */
-        border: none;
-        padding: 10px 24px;
-        font-size: 20px;
-        font-weight: bold;
-        border-radius: 8px;
-        transition: background-color 0.3s;
-    }
-    .landing-overlay .stButton>button:hover {
-        background-color: #c2185b; /* Darker magenta on hover */
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
+    # CUSTOM CSS already applied by set_landing_background above
     # use current session language
     lang_code = st.session_state.get("lang", "en")
     L = LANGS.get(lang_code, LANGS["en"])
 
-    set_landing_background() # Sets global background to white
-    st.markdown("<div class='landing-overlay'>", unsafe_allow_html=True)
-    st.markdown("<h1 style='font-size:44px; margin-bottom:4px;'>🛡️ SafeHer</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='font-size:18px;'>Women Safety Prediction & Alert System — data-driven risk maps & alerts</p>", unsafe_allow_html=True)
+    # ensure CSS exists
+    set_landing_background()
+
+    # wrap landing content in a div with animation classes
+    st.markdown("<div class='page fade-in landing-overlay'>", unsafe_allow_html=True)
+    st.markdown("<h1 style='font-size:44px; margin-bottom:6px;'>🛡️ SafeHer</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='font-size:18px; margin-top:0;'>Women Safety Prediction & Alert System — data-driven risk maps & alerts</p>", unsafe_allow_html=True)
     st.write("")
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
         if st.button(L["enter"], use_container_width=True):
+            # set page and rerun (rerun exists in recent Streamlit)
             st.session_state.page = "main"
             st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
@@ -266,14 +320,15 @@ def landing_page():
 # Main page + features
 # -----------------------
 def main_page():
+    # Ensure CSS is set (keeps look consistent)
+    set_landing_background()
+
     # Determine language and labels locally (do NOT reassign global L)
     lang_code = st.session_state.get("lang", "en")
     local_L = LANGS.get(lang_code, LANGS["en"])
     
-    # Ensure white background is set for main page too
-    set_landing_background()
-
-    # top controls
+    # top controls — put inside an animated wrapper
+    st.markdown("<div class='page slide-in-right' style='padding-bottom:8px;'>", unsafe_allow_html=True)
     top_left, top_center, top_right = st.columns([1,2,1])
     with top_left:
         if st.button(local_L["back_home"]):
@@ -291,8 +346,8 @@ def main_page():
         if chosen_code != lang_code:
             st.session_state["lang"] = chosen_code
             st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    # Use local_L from now on
     L = local_L
 
     st.sidebar.title("Settings")
@@ -368,6 +423,7 @@ def main_page():
     avg_victims_high_risk = high_risk_df["Victims"].mean() if not high_risk_df.empty else 0
 
     # --- SUMMARY DASHBOARD ---
+    st.markdown("<div class='page fade-in'>", unsafe_allow_html=True)
     st.header(L["summary"])
     c1,c2,c3,c4 = st.columns(4)
     with c1:
@@ -401,8 +457,61 @@ def main_page():
         low_city = state_df.sort_values("Victims", ascending=True).iloc[0]
         st.markdown(f"**Top city (most victims):** {top_city['City']} — {int(top_city['Victims'])}")
         st.markdown(f"**Lowest city (least victims):** {low_city['City']} — {int(low_city['Victims'])}")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # ---------------------------
+    # STORY MODE – Safety Scenario Simulator
+    # ---------------------------
+    st.markdown("<div class='page fade-in'>", unsafe_allow_html=True)
+    st.header("🧭 Safety Scenario Simulator (Story Mode)")
+    scenarios = {
+        "Walking Alone at Night in City": {
+            "prompt": "You are walking alone at 10 PM near the main city area. The street is dimly lit and there are few people around.",
+            "options": {
+                "Take a well-lit route": "Good choice! Well-lit routes reduce risk by keeping you visible.",
+                "Call a friend and stay on call": "Excellent! Staying connected increases safety.",
+                "Continue walking silently": "Risky! It's better to stay alert and aware in low-visibility areas.",
+            }
+        },
+        "Traveling in Cab / Auto": {
+            "prompt": "You're traveling alone in a cab at night. The driver suddenly takes a less crowded route.",
+            "options": {
+                "Share Live Location": "Smart move! Sharing location increases safety drastically.",
+                "Ask driver why route changed": "Good. Asking forces transparency.",
+                "Stay silent and trust GPS": "Risky. You should stay alert and question unusual changes.",
+            }
+        },
+        "At Crowded Public Place": {
+            "prompt": "You are in a crowded bus stand with many unknown people moving fast around you.",
+            "options": {
+                "Hold belongings close": "Correct! This prevents theft or snatching.",
+                "Move to a less crowded side": "Good move. Reduces risk of bumping or harassment.",
+                "Keep mobile in hand with earphones": "Not safe. Being distracted increases risks.",
+            }
+        },
+        "Using Mobile Late Night Outdoors": {
+            "prompt": "You are texting outside your hostel late at night. Few security staff are present.",
+            "options": {
+                "Stay alert while texting": "Smart! Multi-task but stay aware.",
+                "Move indoors while texting": "Best choice — safe and comfortable.",
+                "Continue texting with full focus": "Not advisable — distractions can be risky.",
+            }
+        },
+    }
+
+    choice = st.selectbox("Choose a scenario:", list(scenarios.keys()))
+    if choice:
+        data = scenarios[choice]
+        st.markdown(f"### 🎭 Scenario:\n{data['prompt']}")
+        user_action = st.radio("What would you do?", list(data["options"].keys()))
+        if st.button("Submit Choice"):
+            result = data["options"][user_action]
+            st.success(f"🎉 **Outcome:** {result}")
+            st.info("💡 Always stay alert and follow safe practices.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
     # --- TIME-BASED GRAPHS ---
+    st.markdown("<div class='page slide-in-left'>", unsafe_allow_html=True)
     st.header(L["trends"])
     
     col_m, col_h = st.columns(2) # 2 columns
@@ -452,10 +561,12 @@ def main_page():
         ax_h.axis('equal') # Equal aspect ratio ensures that pie is drawn as a circle.
         ax_h.set_title("Victims Distribution by Hour of Day")
         st.pyplot(fig_h)
-        
+    st.markdown("</div>", unsafe_allow_html=True)
+
     st.markdown("---") # Separator after trends
 
     # --- STATE COMPARISON BAR CHART ---
+    st.markdown("<div class='page fade-in'>", unsafe_allow_html=True)
     st.header("State Comparison")
     
     # 1. Prepare the comparison DataFrame from the SAMPLE dictionary
@@ -500,10 +611,11 @@ def main_page():
         )
 
     st.pyplot(fig_comp)
+    st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("---") # Separator
 
-
     # --- MAP ---
+    st.markdown("<div class='page slide-in-right'>", unsafe_allow_html=True)
     st.header(L["map"])
     center_lat = state_df["Latitude"].mean()
     center_lon = state_df["Longitude"].mean()
@@ -527,8 +639,10 @@ def main_page():
         ).add_to(m)
 
     st_folium(m, width=900, height=420)
+    st.markdown("</div>", unsafe_allow_html=True)
 
     # --- INTERACTIVE TABLE ---
+    st.markdown("<div class='page fade-in'>", unsafe_allow_html=True)
     st.header(L["interactive_table"])
     filter_col1, filter_col2, filter_col3 = st.columns([2,2,1])
     search = filter_col1.text_input("Search city (substring)", "")
@@ -576,6 +690,7 @@ def main_page():
         )
         
         st.dataframe(styled_table, use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
     # --- CLUSTERING (optional if sklearn available) ---
     if SKLEARN_AVAILABLE:
@@ -592,6 +707,7 @@ def main_page():
         st.info("Clustering not available (scikit-learn not installed).")
 
     # --- PROXIMITY CHECK + PANIC MAP HIGHLIGHT ---
+    st.markdown("<div class='page fade-in'>", unsafe_allow_html=True)
     st.header(L["proximity"])
     lat_input = st.number_input("Your latitude", value=float(center_lat))
     lon_input = st.number_input("Your longitude", value=float(center_lon))
@@ -617,6 +733,7 @@ def main_page():
             st.success("✅ You are not near any listed risk zones.")
     else:
         st.info("No nearby zone found.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # -----------------------
 # Route
