@@ -1,4 +1,4 @@
-# app.py — SafeHer with added features (fixed language scoping bug, white background, pie chart, added states)
+# app.py — SafeHer with 10 states, State Comparison, Risk Analysis, and Advanced Table Styling
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -31,9 +31,10 @@ st.set_page_config(page_title="SafeHer — Women Safety", layout="wide", initial
 RAW_IMAGE_URL = ""  # set to your raw.githubusercontent link if deploying
 
 # -----------------------
-# Simple sample data (includes Month & Hour for trend charts)
+# Simple sample data (Now includes 10 states)
 # -----------------------
 SAMPLE = {
+    # Original 4 States
     "Telangana": [
         {"City":"Hyderabad","Victims":120,"Latitude":17.3850,"Longitude":78.4867},
         {"City":"Warangal","Victims":25,"Latitude":17.9789,"Longitude":79.5941},
@@ -56,7 +57,7 @@ SAMPLE = {
         {"City":"South Delhi","Victims":90,"Latitude":28.5245,"Longitude":77.1855},
         {"City":"North Delhi","Victims":70,"Latitude":28.7041,"Longitude":77.1025},
     ],
-    # --- ADDED STATES BELOW ---
+    # 6 Added States
     "West Bengal": [
         {"City":"Kolkata","Victims":150,"Latitude":22.5726,"Longitude":88.3639},
         {"City":"Howrah","Victims":45,"Latitude":22.5958,"Longitude":88.2636},
@@ -72,7 +73,21 @@ SAMPLE = {
         {"City":"Coimbatore","Victims":40,"Latitude":11.0168,"Longitude":76.9558},
         {"City":"Madurai","Victims":25,"Latitude":9.9252,"Longitude":78.1198},
     ],
-    # --- ADDED STATES ABOVE ---
+    "Kerala": [
+        {"City":"Kochi","Victims":50,"Latitude":9.9312,"Longitude":76.2673},
+        {"City":"Thiruvananthapuram","Victims":30,"Latitude":8.5241,"Longitude":76.9366},
+        {"City":"Kozhikode","Victims":15,"Latitude":11.2588,"Longitude":75.7804},
+    ],
+    "Rajasthan": [
+        {"City":"Jaipur","Victims":105,"Latitude":26.9124,"Longitude":75.7873},
+        {"City":"Jodhpur","Victims":45,"Latitude":26.2389,"Longitude":73.0243},
+        {"City":"Udaipur","Victims":25,"Latitude":24.5854,"Longitude":73.7125},
+    ],
+    "Uttar Pradesh": [
+        {"City":"Lucknow","Victims":180,"Latitude":26.8467,"Longitude":80.9462},
+        {"City":"Kanpur","Victims":120,"Latitude":26.4499,"Longitude":80.3319},
+        {"City":"Ghaziabad","Victims":85,"Latitude":28.6692,"Longitude":77.4538},
+    ],
 }
 
 # -----------------------
@@ -115,6 +130,7 @@ def compute_risk_score(df):
 
     np.random.seed(0)
     df["recency_factor"] = np.random.rand(len(df)) * 0.2
+    # The risk score calculation: 80% from victims, 20% from a random recency factor
     df["risk_score"] = 0.8 * df["Victims_norm"] + 0.2 * df["recency_factor"]
     df["Risk"] = pd.cut(df["risk_score"], bins=[-1,0.33,0.66,1.0], labels=["Low","Medium","High"])
     return df
@@ -345,6 +361,11 @@ def main_page():
     # compute risk scores
     state_df["Victims"] = pd.to_numeric(state_df["Victims"], errors="coerce").fillna(0)
     state_df = compute_risk_score(state_df)
+    
+    # Calculate additional metrics for the Summary Dashboard
+    corr_score = state_df['Victims'].corr(state_df['risk_score'])
+    high_risk_df = state_df[state_df["Risk"] == "High"]
+    avg_victims_high_risk = high_risk_df["Victims"].mean() if not high_risk_df.empty else 0
 
     # --- SUMMARY DASHBOARD ---
     st.header(L["summary"])
@@ -358,16 +379,34 @@ def main_page():
     with c4:
         st.metric("Median Victims", int(state_df["Victims"].median()))
 
-    top_city = state_df.sort_values("Victims", ascending=False).iloc[0]
-    low_city = state_df.sort_values("Victims", ascending=True).iloc[0]
-    st.markdown(f"**Top city (most victims):** {top_city['City']} — {int(top_city['Victims'])}")
-    st.markdown(f"**Lowest city (least victims):** {low_city['City']} — {int(low_city['Victims'])}")
+    # New row for Correlation Analysis and High-Risk average
+    c5, c6, c_empty1, c_empty2 = st.columns(4)
+    with c5:
+        # Correlation Analysis Metric
+        st.metric(
+            "Victims-Risk Correlation", 
+            f"{corr_score:.4f}", 
+            delta="High correlation confirms model logic" if corr_score > 0.9 else None
+        )
+    with c6:
+        # Average Victims in High-Risk Cities Metric
+        st.metric(
+            "Avg Victims (High Risk)", 
+            f"{avg_victims_high_risk:.1f}", 
+            help="Average number of victims reported in cities categorized as 'High Risk'."
+        )
+
+    if not state_df.empty:
+        top_city = state_df.sort_values("Victims", ascending=False).iloc[0]
+        low_city = state_df.sort_values("Victims", ascending=True).iloc[0]
+        st.markdown(f"**Top city (most victims):** {top_city['City']} — {int(top_city['Victims'])}")
+        st.markdown(f"**Lowest city (least victims):** {low_city['City']} — {int(low_city['Victims'])}")
 
     # --- TIME-BASED GRAPHS ---
     st.header(L["trends"])
     
-    col_m, col_h = st.columns(2)
-
+    col_m, col_h = st.columns(2) # 2 columns
+    
     # Month trend (line plot)
     with col_m:
         month_order = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
@@ -384,8 +423,7 @@ def main_page():
         # Filter hours where Victims > 0 for a cleaner pie chart
         pie_data = hour_counts[hour_counts > 0]
         
-        # Prepare labels: only show the hour if it has victims
-        # Use a maximum of 12 labels for readability; group small hours into 'Other'
+        # Prepare labels: group small hours into 'Other' if there are too many slices
         if len(pie_data) > 12:
             # Group all but the top 11 hours into 'Other'
             top_11_hours = pie_data.nlargest(11)
@@ -414,6 +452,56 @@ def main_page():
         ax_h.axis('equal') # Equal aspect ratio ensures that pie is drawn as a circle.
         ax_h.set_title("Victims Distribution by Hour of Day")
         st.pyplot(fig_h)
+        
+    st.markdown("---") # Separator after trends
+
+    # --- STATE COMPARISON BAR CHART ---
+    st.header("State Comparison")
+    
+    # 1. Prepare the comparison DataFrame from the SAMPLE dictionary
+    comparison_data = []
+    for state_name, cities_data in SAMPLE.items():
+        # Sum all victims across all cities in the state
+        total_victims = sum(city['Victims'] for city in cities_data)
+        comparison_data.append({"State": state_name, "Total Victims": total_victims})
+
+    df_comparison = pd.DataFrame(comparison_data)
+    
+    # 2. Sort the data by victims for better visualization
+    df_comparison = df_comparison.sort_values("Total Victims", ascending=False)
+    
+    # 3. Create the Bar Chart
+    fig_comp, ax_comp = plt.subplots(figsize=(10, 5))
+    
+    # Define colors: highlight the currently selected state in red/magenta
+    colors = ['#e91e63' if s == state else '#add8e6' for s in df_comparison['State']]
+    
+    sns.barplot(
+        x='Total Victims', 
+        y='State', 
+        data=df_comparison, 
+        palette=colors, 
+        ax=ax_comp
+    )
+    
+    ax_comp.set_title(f"Total Victims by State (Selected: {state})")
+    ax_comp.set_xlabel("Total Victims (Simulated)")
+    ax_comp.set_ylabel("") # State names are on the y-axis
+    
+    # Optional: Add victim count labels to the bars
+    for i in ax_comp.patches:
+        ax_comp.text(
+            i.get_width() + 3,  # x-position
+            i.get_y() + i.get_height() / 2,  # y-position
+            f"{int(i.get_width())}", 
+            va='center',
+            fontsize=10, 
+            color='black'
+        )
+
+    st.pyplot(fig_comp)
+    st.markdown("---") # Separator
+
 
     # --- MAP ---
     st.header(L["map"])
@@ -460,7 +548,34 @@ def main_page():
         table_df = table_df.sort_values("City", ascending=True)
 
     if show_table:
-        st.dataframe(table_df[["City","Victims","risk_score","Risk","Month","Hour"]].reset_index(drop=True), use_container_width=True)
+        # Columns to display in the styled table
+        display_cols = ["City", "Victims", "risk_score", "Risk", "Month", "Hour"]
+        
+        # --- Advanced Styling using Pandas Styler ---
+        def color_risk(val):
+            """Applies color based on the Risk value."""
+            if val == 'High':
+                color = 'background-color: #f8d7da; color: #721c24' # Light Red background, Dark Red text
+            elif val == 'Medium':
+                color = 'background-color: #fff3cd; color: #856404' # Light Yellow background, Dark Yellow text
+            elif val == 'Low':
+                color = 'background-color: #d4edda; color: #155724' # Light Green background, Dark Green text
+            else:
+                color = ''
+            return color
+
+        # Apply styling
+        styled_table = (
+            table_df[display_cols]
+            .reset_index(drop=True)
+            .style
+            .applymap(color_risk, subset=['Risk'])
+            # Add bar chart to Victims column
+            .bar(subset=['Victims'], color='#e91e63', align='left')
+            .set_properties(**{'font-size': '10pt', 'border': '1px solid #eee'})
+        )
+        
+        st.dataframe(styled_table, use_container_width=True)
 
     # --- CLUSTERING (optional if sklearn available) ---
     if SKLEARN_AVAILABLE:
