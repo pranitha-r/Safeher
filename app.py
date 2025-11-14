@@ -1,4 +1,4 @@
-# app.py — SafeHer with added features (fixed language scoping bug)
+# app.py — SafeHer with added features (fixed language scoping bug, white background, pie chart, added states)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -56,6 +56,23 @@ SAMPLE = {
         {"City":"South Delhi","Victims":90,"Latitude":28.5245,"Longitude":77.1855},
         {"City":"North Delhi","Victims":70,"Latitude":28.7041,"Longitude":77.1025},
     ],
+    # --- ADDED STATES BELOW ---
+    "West Bengal": [
+        {"City":"Kolkata","Victims":150,"Latitude":22.5726,"Longitude":88.3639},
+        {"City":"Howrah","Victims":45,"Latitude":22.5958,"Longitude":88.2636},
+        {"City":"Durgapur","Victims":15,"Latitude":23.5350,"Longitude":87.3175},
+    ],
+    "Gujarat": [
+        {"City":"Ahmedabad","Victims":110,"Latitude":23.0225,"Longitude":72.5714},
+        {"City":"Surat","Victims":65,"Latitude":21.1702,"Longitude":72.8311},
+        {"City":"Vadodara","Victims":35,"Latitude":22.3072,"Longitude":73.1812},
+    ],
+    "Tamil Nadu": [
+        {"City":"Chennai","Victims":130,"Latitude":13.0827,"Longitude":80.2707},
+        {"City":"Coimbatore","Victims":40,"Latitude":11.0168,"Longitude":76.9558},
+        {"City":"Madurai","Victims":25,"Latitude":9.9252,"Longitude":78.1198},
+    ],
+    # --- ADDED STATES ABOVE ---
 }
 
 # -----------------------
@@ -110,35 +127,25 @@ def haversine(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
     return R * c
 
-# background helper (base64 local or RAW_IMAGE_URL fallback)
+# background helper (set to white background)
 def set_landing_background():
-    local_path = pathlib.Path("assets/background.png")
-    image_url = None
-    if local_path.exists():
-        with open(local_path, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode()
-        image_url = f"data:image/png;base64,{b64}"
-    elif RAW_IMAGE_URL:
-        image_url = RAW_IMAGE_URL
-    if not image_url:
-        return
-    css = f"""
+    # Force white background on the entire app and remove landing-overlay styling
+    css = """
     <style>
-    .stApp {{
-        background-image: url("{image_url}");
-        background-size: cover;
-        background-repeat: no-repeat;
-        background-position: center;
-        background-attachment: fixed;
-    }}
-    .landing-overlay {{
-        background: rgba(0,0,0,0.30);
+    /* Force white background */
+    .stApp {
+        background-color: white; 
+        background-image: none;
+    }
+    /* Remove text overlay background/color for main landing content against white */
+    .landing-overlay {
+        background: none; /* Remove dark overlay */
         padding: 26px;
         border-radius: 12px;
-        color: white;
+        color: black; /* Change text color to black for white background */
         max-width: 1000px;
         margin: 40px auto;
-    }}
+    }
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
@@ -227,7 +234,7 @@ def landing_page():
     lang_code = st.session_state.get("lang", "en")
     L = LANGS.get(lang_code, LANGS["en"])
 
-    set_landing_background()
+    set_landing_background() # Sets global background to white
     st.markdown("<div class='landing-overlay'>", unsafe_allow_html=True)
     st.markdown("<h1 style='font-size:44px; margin-bottom:4px;'>🛡️ SafeHer</h1>", unsafe_allow_html=True)
     st.markdown("<p style='font-size:18px;'>Women Safety Prediction & Alert System — data-driven risk maps & alerts</p>", unsafe_allow_html=True)
@@ -246,6 +253,9 @@ def main_page():
     # Determine language and labels locally (do NOT reassign global L)
     lang_code = st.session_state.get("lang", "en")
     local_L = LANGS.get(lang_code, LANGS["en"])
+    
+    # Ensure white background is set for main page too
+    set_landing_background()
 
     # top controls
     top_left, top_center, top_right = st.columns([1,2,1])
@@ -355,20 +365,55 @@ def main_page():
 
     # --- TIME-BASED GRAPHS ---
     st.header(L["trends"])
-    month_order = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
-    month_counts = state_df.groupby("Month")["Victims"].sum().reindex(month_order).fillna(0)
-    fig_m, ax_m = plt.subplots(figsize=(7,2.8))
-    sns.lineplot(x=month_counts.index, y=month_counts.values, marker="o", ax=ax_m)
-    ax_m.set_title("Victims by Month")
-    ax_m.set_ylabel("Victims")
-    st.pyplot(fig_m)
+    
+    col_m, col_h = st.columns(2)
 
-    hour_counts = state_df.groupby("Hour")["Victims"].sum().reindex(range(0,24), fill_value=0)
-    fig_h, ax_h = plt.subplots(figsize=(8,2.6))
-    sns.barplot(x=hour_counts.index, y=hour_counts.values, ax=ax_h)
-    ax_h.set_title("Victims by Hour of Day")
-    ax_h.set_xlabel("Hour")
-    st.pyplot(fig_h)
+    # Month trend (line plot)
+    with col_m:
+        month_order = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+        month_counts = state_df.groupby("Month")["Victims"].sum().reindex(month_order).fillna(0)
+        fig_m, ax_m = plt.subplots(figsize=(7,4))
+        sns.lineplot(x=month_counts.index, y=month_counts.values, marker="o", ax=ax_m)
+        ax_m.set_title("Victims by Month")
+        ax_m.set_ylabel("Victims")
+        st.pyplot(fig_m)
+
+    # Hour distribution (PIE CHART)
+    with col_h:
+        hour_counts = state_df.groupby("Hour")["Victims"].sum().reindex(range(0,24), fill_value=0)
+        # Filter hours where Victims > 0 for a cleaner pie chart
+        pie_data = hour_counts[hour_counts > 0]
+        
+        # Prepare labels: only show the hour if it has victims
+        # Use a maximum of 12 labels for readability; group small hours into 'Other'
+        if len(pie_data) > 12:
+            # Group all but the top 11 hours into 'Other'
+            top_11_hours = pie_data.nlargest(11)
+            other_victims = pie_data.sum() - top_11_hours.sum()
+            
+            pie_values = top_11_hours.values.tolist()
+            pie_labels = [f"Hour {h}" for h in top_11_hours.index]
+            
+            if other_victims > 0:
+                pie_values.append(other_victims)
+                pie_labels.append("Other Hours")
+        else:
+            pie_values = pie_data.values.tolist()
+            pie_labels = [f"Hour {h}" for h in pie_data.index]
+        
+        fig_h, ax_h = plt.subplots(figsize=(7,4))
+        
+        # Pie chart configuration
+        ax_h.pie(
+            pie_values, 
+            labels=pie_labels, 
+            autopct='%1.1f%%', 
+            startangle=90, 
+            pctdistance=0.85 # Position of the percentage label
+        )
+        ax_h.axis('equal') # Equal aspect ratio ensures that pie is drawn as a circle.
+        ax_h.set_title("Victims Distribution by Hour of Day")
+        st.pyplot(fig_h)
 
     # --- MAP ---
     st.header(L["map"])
@@ -450,7 +495,7 @@ def main_page():
             else:
                 st.warning(f"⚠ You are within {nearest['dist']:.2f} km of {nearest['city']} ({nearest['risk']})")
             subm = folium.Map(location=[nearest["lat"], nearest["lon"]], zoom_start=13)
-            folium.CircleMarker([nearest["lat"], nearest["lon"]], radius=12, color='red', fill=True, fill_color='red').add_to(subm)
+            folium.CircleMarker([lat_input, lon_input], radius=12, color='red', fill=True, fill_color='red').add_to(subm)
             folium.Marker([lat_input, lon_input], popup="You (simulated)").add_to(subm)
             st_folium(subm, width=700, height=300)
         else:
