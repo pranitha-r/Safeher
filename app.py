@@ -1,150 +1,467 @@
-# ============================================================
-# SafeHer: Smart Women Safety Analytics Website (Streamlit)
-# Developed by pranitha
-# ============================================================
-
+# app.py — SafeHer with added features (fixed language scoping bug)
 import streamlit as st
 import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
-from sklearn.cluster import KMeans
-from streamlit_folium import st_folium
+import numpy as np
 import folium
+from streamlit_folium import st_folium
+import matplotlib.pyplot as plt
+import seaborn as sns
 import math
 import os
-from dotenv import load_dotenv
-from twilio.rest import Client
+import time
+import base64
+import pathlib
+from datetime import datetime
 
-# ------------------------------
-# CONFIG
-# ------------------------------
-st.set_page_config(page_title="SafeHer: Women Safety Analytics", layout="wide")
-load_dotenv()
+# Optional: clustering (import inside try so app works if sklearn missing)
+try:
+    from sklearn.cluster import KMeans
+    SKLEARN_AVAILABLE = True
+except Exception:
+    SKLEARN_AVAILABLE = False
 
-# Optional Twilio setup
-TWILIO_ENABLED = os.getenv("TWILIO_ENABLED", "false").lower() == "true"
-if TWILIO_ENABLED:
-    client = Client(os.getenv("TWILIO_SID"), os.getenv("TWILIO_TOKEN"))
-    TWILIO_FROM = os.getenv("TWILIO_FROM")
+# -----------------------
+# Page config
+# -----------------------
+st.set_page_config(page_title="SafeHer — Women Safety", layout="wide", initial_sidebar_state="expanded")
 
-# ------------------------------
-# HELPER FUNCTIONS
-# ------------------------------
-def load_data():
-    df = pd.read_csv("SafeHer_WomenSafety.csv")
-    df["Risk"] = df["Victims"].apply(lambda x: "High" if x > 40 else ("Medium" if x > 20 else "Low"))
+# -----------------------
+# Raw image URL (if you deploy) - optional
+# -----------------------
+RAW_IMAGE_URL = ""  # set to your raw.githubusercontent link if deploying
+
+# -----------------------
+# Simple sample data (includes Month & Hour for trend charts)
+# -----------------------
+SAMPLE = {
+    "Telangana": [
+        {"City":"Hyderabad","Victims":120,"Latitude":17.3850,"Longitude":78.4867},
+        {"City":"Warangal","Victims":25,"Latitude":17.9789,"Longitude":79.5941},
+        {"City":"Nizamabad","Victims":12,"Latitude":18.6722,"Longitude":78.0941},
+        {"City":"Karimnagar","Victims":18,"Latitude":18.4386,"Longitude":79.1288},
+    ],
+    "Maharashtra": [
+        {"City":"Mumbai","Victims":200,"Latitude":19.0760,"Longitude":72.8777},
+        {"City":"Pune","Victims":80,"Latitude":18.5204,"Longitude":73.8567},
+        {"City":"Nagpur","Victims":30,"Latitude":21.1458,"Longitude":79.0882},
+        {"City":"Nashik","Victims":20,"Latitude":19.9975,"Longitude":73.7898},
+    ],
+    "Karnataka": [
+        {"City":"Bengaluru","Victims":140,"Latitude":12.9716,"Longitude":77.5946},
+        {"City":"Mysuru","Victims":22,"Latitude":12.2958,"Longitude":76.6394},
+        {"City":"Hubli","Victims":10,"Latitude":15.3647,"Longitude":75.1235},
+    ],
+    "Delhi": [
+        {"City":"Central Delhi","Victims":160,"Latitude":28.6325,"Longitude":77.2195},
+        {"City":"South Delhi","Victims":90,"Latitude":28.5245,"Longitude":77.1855},
+        {"City":"North Delhi","Victims":70,"Latitude":28.7041,"Longitude":77.1025},
+    ],
+}
+
+# -----------------------
+# Helpers
+# -----------------------
+def sample_to_df(state):
+    rows = SAMPLE.get(state, [])
+    df = pd.DataFrame(rows)
+    # generate Month and Hour for demo charts if not present
+    if "Month" not in df.columns:
+        months = np.random.choice(
+            ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"],
+            size=len(df)
+        )
+        df["Month"] = months
+    if "Hour" not in df.columns:
+        df["Hour"] = np.random.choice(list(range(0,24)), size=len(df))
+    return df
+
+def compute_risk_score(df):
+    if df.empty:
+        return df
+    # If sklearn not available, use a simple min-max without importing inside to avoid errors
+    try:
+        from sklearn.preprocessing import MinMaxScaler
+        sc = MinMaxScaler()
+        df = df.copy()
+        if "Victims" not in df.columns:
+            df["Victims"] = 0
+        df["Victims_norm"] = sc.fit_transform(df[["Victims"]])
+    except Exception:
+        df = df.copy()
+        if "Victims" not in df.columns:
+            df["Victims"] = 0
+        v = df["Victims"].astype(float).fillna(0).values
+        if len(v) > 0 and v.max() != v.min():
+            df["Victims_norm"] = (v - v.min()) / (v.max() - v.min())
+        else:
+            df["Victims_norm"] = 0.0
+
+    np.random.seed(0)
+    df["recency_factor"] = np.random.rand(len(df)) * 0.2
+    df["risk_score"] = 0.8 * df["Victims_norm"] + 0.2 * df["recency_factor"]
+    df["Risk"] = pd.cut(df["risk_score"], bins=[-1,0.33,0.66,1.0], labels=["Low","Medium","High"])
     return df
 
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371
-    dLat, dLon = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
-    a = math.sin(dLat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dLon/2)**2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    dLat = math.radians(lat2 - lat1)
+    dLon = math.radians(lon2 - lon1)
+    a = math.sin(dLat/2)**2 + math.cos(math.radians(lat1))*math.cos(math.radians(lat2))*math.sin(dLon/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    return R * c
 
-# ------------------------------
-# PAGE HEADER
-# ------------------------------
-st.title("🛡️ SafeHer: Smart Women Safety Analytics & Alert System")
-st.write("An IDS project that uses data analytics to identify unsafe areas and send safety alerts.")
+# background helper (base64 local or RAW_IMAGE_URL fallback)
+def set_landing_background():
+    local_path = pathlib.Path("assets/background.png")
+    image_url = None
+    if local_path.exists():
+        with open(local_path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+        image_url = f"data:image/png;base64,{b64}"
+    elif RAW_IMAGE_URL:
+        image_url = RAW_IMAGE_URL
+    if not image_url:
+        return
+    css = f"""
+    <style>
+    .stApp {{
+        background-image: url("{image_url}");
+        background-size: cover;
+        background-repeat: no-repeat;
+        background-position: center;
+        background-attachment: fixed;
+    }}
+    .landing-overlay {{
+        background: rgba(0,0,0,0.30);
+        padding: 26px;
+        border-radius: 12px;
+        color: white;
+        max-width: 1000px;
+        margin: 40px auto;
+    }}
+    </style>
+    """
+    st.markdown(css, unsafe_allow_html=True)
 
-# ------------------------------
-# SIDEBAR
-# ------------------------------
-st.sidebar.title("⚙️ Controls")
-user_lat = st.sidebar.number_input("Enter Your Latitude", value=17.3850)
-user_lon = st.sidebar.number_input("Enter Your Longitude", value=78.4867)
-alert_on = st.sidebar.checkbox("Enable Safety Alert (Distance < 2 km)")
+# -----------------------
+# Multi-language simple dictionary
+# -----------------------
+LANGS = {
+    "en": {
+        "enter": "Enter SafeHer",
+        "select_state": "Select State",
+        "upload_csv": "Upload CSV (optional)",
+        "panic": "PANIC BUTTON",
+        "panic_confirm": "Emergency alert (UI only) activated!",
+        "summary": "Summary",
+        "trends": "Time-Based Trends",
+        "interactive_table": "Interactive Table",
+        "map": "Interactive Map",
+        "proximity": "Proximity Check",
+        "back_home": "⟵ Back to Home",
+        "no_data": "No data for selected state. Upload CSV with required columns or choose another state."
+    },
+    "hi": {
+        "enter": "SafeHer में प्रवेश करें",
+        "select_state": "राज्य चुनें",
+        "upload_csv": "CSV अपलोड करें (वैकल्पिक)",
+        "panic": "आपात बटन",
+        "panic_confirm": "आपातकालीन चेतावनी (केवल UI) सक्रिय!",
+        "summary": "सारांश",
+        "trends": "समय-आधारित प्रवृत्तियाँ",
+        "interactive_table": "इंटरएक्टिव तालिका",
+        "map": "इंटरएक्टिव मानचित्र",
+        "proximity": "निकटता जाँच",
+        "back_home": "⟵ घर पर वापस",
+        "no_data": "चयनित राज्य के लिए डेटा नहीं। आवश्यक कॉलम के साथ CSV अपलोड करें या दूसरा राज्य चुनें।"
+    },
+    "te": {
+        "enter": "SafeHer లో ప్రవేశించండి",
+        "select_state": "రాష్ట్రం ఎంచుకోండి",
+        "upload_csv": "CSV అప్లోడ్ చేయండి (ఐచ్ఛికం)",
+        "panic": "పేనిక్ బటన్",
+        "panic_confirm": "విపత్తు హెచ్చరిక (UI మాత్రమే) ప్రారంభమైంది!",
+        "summary": "సారాంశం",
+        "trends": "సమయానికి సంబంధించిన ధోరణులు",
+        "interactive_table": "ఇంటరాక్టివ్ పట్టిక",
+        "map": "ఇంటరాక్టివ్ మ్యాప్",
+        "proximity": "సమీపతా తనిఖీ",
+        "back_home": "⟵ హోమ్‌కు వెళ్ళు",
+        "no_data": "ఎంపిక చేసిన రాష్ట్రానికి డేటా లేదు. అవసరమైన కాలమ్స్‌తో CSVను అప్లోడ్ చేయండి లేదా వేరే రాష్ట్రాన్ని ఎంచుకోండి."
+    }
+}
 
-# ------------------------------
-# LOAD DATA
-# ------------------------------
-df = load_data()
-st.subheader("📂 Dataset Preview")
-st.dataframe(df)
+# -----------------------
+# Session state for page & language
+# -----------------------
+if "page" not in st.session_state:
+    st.session_state.page = "landing"
+if "lang" not in st.session_state:
+    st.session_state.lang = "en"
 
-# ------------------------------
-# ANALYTICS
-# ------------------------------
-st.subheader("📊 Crime Analytics by State")
-state_summary = df.groupby("State", as_index=False)["Victims"].sum().sort_values("Victims", ascending=False)
-fig, ax = plt.subplots(figsize=(8,5))
-sns.barplot(x="Victims", y="State", data=state_summary, palette="coolwarm", ax=ax)
-st.pyplot(fig)
+# -----------------------
+# Landing page
+# -----------------------
+def landing_page():
+    # CUSTOM CSS FOR BUTTON VISIBILITY
+    st.markdown("""
+    <style>
+    /* Targeting the primary button on the landing page for high contrast */
+    .landing-overlay .stButton>button {
+        background-color: #e91e63; /* Bright Magenta */
+        color: white; /* White text */
+        border: none;
+        padding: 10px 24px;
+        font-size: 20px;
+        font-weight: bold;
+        border-radius: 8px;
+        transition: background-color 0.3s;
+    }
+    .landing-overlay .stButton>button:hover {
+        background-color: #c2185b; /* Darker magenta on hover */
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # use current session language
+    lang_code = st.session_state.get("lang", "en")
+    L = LANGS.get(lang_code, LANGS["en"])
 
-st.subheader("🥧 Crime Type Distribution")
-crime_counts = df["Crime_Type"].value_counts()
-fig2, ax2 = plt.subplots()
-ax2.pie(crime_counts, labels=crime_counts.index, autopct="%1.1f%%", startangle=90)
-ax2.axis("equal")
-st.pyplot(fig2)
+    set_landing_background()
+    st.markdown("<div class='landing-overlay'>", unsafe_allow_html=True)
+    st.markdown("<h1 style='font-size:44px; margin-bottom:4px;'>🛡️ SafeHer</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='font-size:18px;'>Women Safety Prediction & Alert System — data-driven risk maps & alerts</p>", unsafe_allow_html=True)
+    st.write("")
+    c1, c2, c3 = st.columns([1,2,1])
+    with c2:
+        if st.button(L["enter"], use_container_width=True):
+            st.session_state.page = "main"
+            st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
-# ------------------------------
-# CLUSTERING
-# ------------------------------
-st.subheader("🤖 K-Means Clustering")
-kmeans = KMeans(n_clusters=3, random_state=42, n_init="auto")
-df["Cluster"] = kmeans.fit_predict(df[["Victims"]])
-labels = {0: "Low Risk", 1: "Medium Risk", 2: "High Risk"}
-df["Cluster_Label"] = df["Cluster"].map(labels)
-st.dataframe(df[["City", "Victims", "Cluster_Label"]])
+# -----------------------
+# Main page + features
+# -----------------------
+def main_page():
+    # Determine language and labels locally (do NOT reassign global L)
+    lang_code = st.session_state.get("lang", "en")
+    local_L = LANGS.get(lang_code, LANGS["en"])
 
-# ------------------------------
-# MAP VISUALIZATION
-# ------------------------------
-st.subheader("🗺️ Interactive Safety Map")
-m = folium.Map(location=[20.59, 78.96], zoom_start=5)
-for _, row in df.iterrows():
-    color = "red" if row["Risk"] == "High" else ("orange" if row["Risk"] == "Medium" else "green")
-    folium.CircleMarker(
-        [row["Latitude"], row["Longitude"]],
-        radius=8,
-        color=color,
-        fill=True,
-        fill_color=color,
-        popup=f"{row['City']} ({row['Risk']}) - {row['Victims']} victims"
-    ).add_to(m)
-st_data = st_folium(m, width=700, height=500)
+    # top controls
+    top_left, top_center, top_right = st.columns([1,2,1])
+    with top_left:
+        if st.button(local_L["back_home"]):
+            st.session_state.page = "landing"
+            st.rerun()
+    with top_center:
+        st.title("🛡️ SafeHer — Women Safety Dashboard")
+    with top_right:
+        # language selector; map labels to codes
+        lang_map = {"English":"en", "हिन्दी":"hi", "తెలుగు":"te"}
+        reverse_map = {v:k for k,v in lang_map.items()}
+        current_label = reverse_map.get(lang_code, "English")
+        chosen_label = st.selectbox("Language", options=list(lang_map.keys()), index=list(lang_map.keys()).index(current_label))
+        chosen_code = lang_map[chosen_label]
+        if chosen_code != lang_code:
+            st.session_state["lang"] = chosen_code
+            st.rerun()
 
-# ------------------------------
-# SAFETY ALERT SYSTEM
-# ------------------------------
-st.subheader("📍 Safety Alert System")
-nearest = None
-for _, row in df.iterrows():
-    dist = haversine(user_lat, user_lon, row["Latitude"], row["Longitude"])
-    if nearest is None or dist < nearest["dist"]:
-        nearest = {"city": row["City"], "risk": row["Risk"], "dist": dist}
+    # Use local_L from now on
+    L = local_L
 
-if nearest:
-    if nearest["dist"] < 2 and alert_on:
-        st.error(f"⚠ ALERT! You are near a high-risk area: {nearest['city']} ({nearest['dist']:.2f} km)")
-    elif nearest["dist"] < 2:
-        st.warning(f"⚠ You are close to {nearest['city']} ({nearest['dist']:.2f} km)")
+    st.sidebar.title("Settings")
+    uploaded = st.sidebar.file_uploader(L["upload_csv"], type=["csv"])
+    st.sidebar.markdown("---")
+    st.sidebar.write("Feature toggles")
+    show_heatmap = st.sidebar.checkbox("Show Heatmap", value=False)
+    show_table = st.sidebar.checkbox("Show Interactive Table", value=True)
+
+    # Panic button UI (no SMS)
+    st.markdown("### 🔴 " + L["panic"])
+    if st.button("🔺 " + L["panic"]):
+        st.error(L["panic_confirm"])
+        st.balloons()
+
+    # Load data
+    if uploaded is not None:
+        try:
+            df_all = pd.read_csv(uploaded)
+            st.sidebar.success("CSV loaded")
+            df_all.columns = [c.strip() for c in df_all.columns]
+        except Exception:
+            st.sidebar.error("Could not load CSV — using sample")
+            df_all = None
     else:
-        st.success("✅ You are in a safe zone.")
+        df_all = None
 
-# ------------------------------
-# OPTIONAL: SMS ALERT
-# ------------------------------
-if TWILIO_ENABLED:
-    st.subheader("📱 Send Safety SMS")
-    phone = st.text_input("Enter phone number (+91...)")
-    message = f"SafeHer Alert: You are near {nearest['city']} ({nearest['risk']}) zone."
-    if st.button("Send SMS"):
-        client.messages.create(to=phone, from_=TWILIO_FROM, body=message)
-        st.success("✅ SMS sent successfully!")
+    # states list
+    states = sorted(SAMPLE.keys()) if df_all is None or "State" not in df_all.columns else sorted(df_all["State"].unique().tolist())
+    state = st.selectbox(L["select_state"], options=states)
 
-# ------------------------------
-# INSIGHTS
-# ------------------------------
-st.subheader("💡 Insights")
-st.markdown("""
-- **Delhi** shows the highest number of victims — High Risk Zone.  
-- **Mumbai** and **Lucknow** are Medium Risk.  
-- **Chennai** and **Mysuru** show Low Risk patterns.  
-- This data-driven analysis helps identify unsafe areas for women.
-""")
+    # build state_df
+    if df_all is not None and "State" in df_all.columns:
+        state_df = df_all[df_all["State"] == state].copy()
+    elif df_all is not None and "City" in df_all.columns:
+        sample_cities = [r["City"] for r in SAMPLE.get(state,[])]
+        state_df = df_all[df_all["City"].isin(sample_cities)].copy()
+    else:
+        state_df = sample_to_df(state)
 
-st.markdown("---")
-st.caption("Developed by pranitha| IDS Project 2025 | Streamlit Website")
+    if state_df is None or state_df.empty:
+        st.warning(L["no_data"])
+        return
 
+    # ensure required cols and fill lat/lon if missing using sample
+    if "Victims" not in state_df.columns:
+        state_df["Victims"] = 0
+    if "Latitude" not in state_df.columns or "Longitude" not in state_df.columns:
+        sample_df = sample_to_df(state)
+        if not sample_df.empty:
+            mapping = sample_df.set_index("City")[["Latitude","Longitude"]].to_dict(orient="index")
+            def fill_lat(row):
+                return mapping.get(row.get("City"), {}).get("Latitude", np.nan)
+            def fill_lon(row):
+                return mapping.get(row.get("City"), {}).get("Longitude", np.nan)
+            state_df["Latitude"] = state_df.apply(lambda r: fill_lat(r) if pd.isna(r.get("Latitude")) else r.get("Latitude"), axis=1)
+            state_df["Longitude"] = state_df.apply(lambda r: fill_lon(r) if pd.isna(r.get("Longitude")) else r.get("Longitude"), axis=1)
+
+    # Create Month/Hour if absent
+    if "Month" not in state_df.columns:
+        months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+        state_df["Month"] = [months[i % 12] for i in range(len(state_df))]
+    if "Hour" not in state_df.columns:
+        state_df["Hour"] = [int((i*3) % 24) for i in range(len(state_df))]
+
+    # compute risk scores
+    state_df["Victims"] = pd.to_numeric(state_df["Victims"], errors="coerce").fillna(0)
+    state_df = compute_risk_score(state_df)
+
+    # --- SUMMARY DASHBOARD ---
+    st.header(L["summary"])
+    c1,c2,c3,c4 = st.columns(4)
+    with c1:
+        st.metric("Total Cities", len(state_df))
+    with c2:
+        st.metric("Total Victims", int(state_df["Victims"].sum()))
+    with c3:
+        st.metric("High Risk Cities", int((state_df["Risk"]=="High").sum()))
+    with c4:
+        st.metric("Median Victims", int(state_df["Victims"].median()))
+
+    top_city = state_df.sort_values("Victims", ascending=False).iloc[0]
+    low_city = state_df.sort_values("Victims", ascending=True).iloc[0]
+    st.markdown(f"**Top city (most victims):** {top_city['City']} — {int(top_city['Victims'])}")
+    st.markdown(f"**Lowest city (least victims):** {low_city['City']} — {int(low_city['Victims'])}")
+
+    # --- TIME-BASED GRAPHS ---
+    st.header(L["trends"])
+    month_order = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+    month_counts = state_df.groupby("Month")["Victims"].sum().reindex(month_order).fillna(0)
+    fig_m, ax_m = plt.subplots(figsize=(7,2.8))
+    sns.lineplot(x=month_counts.index, y=month_counts.values, marker="o", ax=ax_m)
+    ax_m.set_title("Victims by Month")
+    ax_m.set_ylabel("Victims")
+    st.pyplot(fig_m)
+
+    hour_counts = state_df.groupby("Hour")["Victims"].sum().reindex(range(0,24), fill_value=0)
+    fig_h, ax_h = plt.subplots(figsize=(8,2.6))
+    sns.barplot(x=hour_counts.index, y=hour_counts.values, ax=ax_h)
+    ax_h.set_title("Victims by Hour of Day")
+    ax_h.set_xlabel("Hour")
+    st.pyplot(fig_h)
+
+    # --- MAP ---
+    st.header(L["map"])
+    center_lat = state_df["Latitude"].mean()
+    center_lon = state_df["Longitude"].mean()
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=7, control_scale=True)
+
+    if show_heatmap:
+        try:
+            from folium.plugins import HeatMap
+            heat_data = state_df[["Latitude","Longitude","Victims"]].dropna().values.tolist()
+            HeatMap([[r[0], r[1], r[2]] for r in heat_data], radius=25).add_to(m)
+        except Exception:
+            pass
+
+    for _, row in state_df.iterrows():
+        color = "red" if row["Risk"] == "High" else ("orange" if row["Risk"] == "Medium" else "green")
+        folium.CircleMarker(
+            [row["Latitude"], row["Longitude"]],
+            radius = 6 + min(18, max(4, (row["Victims"]**0.5))),
+            color=color, fill=True, fill_color=color, fill_opacity=0.7,
+            popup=f"{row['City']} — Victims: {int(row['Victims'])} — Risk: {row['Risk']}"
+        ).add_to(m)
+
+    st_folium(m, width=900, height=420)
+
+    # --- INTERACTIVE TABLE ---
+    st.header(L["interactive_table"])
+    filter_col1, filter_col2, filter_col3 = st.columns([2,2,1])
+    search = filter_col1.text_input("Search city (substring)", "")
+    risk_filter = filter_col2.selectbox("Filter by Risk", options=["All","High","Medium","Low"], index=0)
+    sort_by = filter_col3.selectbox("Sort by", options=["Victims (desc)","Victims (asc)","City (A-Z)"], index=0)
+
+    table_df = state_df.copy()
+    if search:
+        table_df = table_df[table_df["City"].str.lower().str.contains(search.lower())]
+    if risk_filter != "All":
+        table_df = table_df[table_df["Risk"] == risk_filter]
+    if sort_by == "Victims (desc)":
+        table_df = table_df.sort_values("Victims", ascending=False)
+    elif sort_by == "Victims (asc)":
+        table_df = table_df.sort_values("Victims", ascending=True)
+    else:
+        table_df = table_df.sort_values("City", ascending=True)
+
+    if show_table:
+        st.dataframe(table_df[["City","Victims","risk_score","Risk","Month","Hour"]].reset_index(drop=True), use_container_width=True)
+
+    # --- CLUSTERING (optional if sklearn available) ---
+    if SKLEARN_AVAILABLE:
+        try:
+            k = min(3, len(state_df))
+            if k >= 2:
+                km = KMeans(n_clusters=k, random_state=42, n_init="auto")
+                state_df["Cluster"] = km.fit_predict(state_df[["Victims"]])
+                st.markdown("**Clusters (by Victims)**")
+                st.dataframe(state_df[["City","Victims","Cluster"]])
+        except Exception:
+            pass
+    else:
+        st.info("Clustering not available (scikit-learn not installed).")
+
+    # --- PROXIMITY CHECK + PANIC MAP HIGHLIGHT ---
+    st.header(L["proximity"])
+    lat_input = st.number_input("Your latitude", value=float(center_lat))
+    lon_input = st.number_input("Your longitude", value=float(center_lon))
+    radius_km = st.slider("Alert radius (km)", min_value=1, max_value=50, value=5)
+
+    nearest = None
+    for _, row in state_df.iterrows():
+        d = haversine(lat_input, lon_input, row["Latitude"], row["Longitude"])
+        if nearest is None or d < nearest["dist"]:
+            nearest = {"city": row["City"], "dist": d, "risk": row["Risk"], "lat": row["Latitude"], "lon": row["Longitude"]}
+
+    if nearest:
+        if nearest["dist"] <= radius_km:
+            if nearest["risk"] == "High":
+                st.error(f"⚠ You are within {nearest['dist']:.2f} km of HIGH RISK area: {nearest['city']}")
+            else:
+                st.warning(f"⚠ You are within {nearest['dist']:.2f} km of {nearest['city']} ({nearest['risk']})")
+            subm = folium.Map(location=[nearest["lat"], nearest["lon"]], zoom_start=13)
+            folium.CircleMarker([nearest["lat"], nearest["lon"]], radius=12, color='red', fill=True, fill_color='red').add_to(subm)
+            folium.Marker([lat_input, lon_input], popup="You (simulated)").add_to(subm)
+            st_folium(subm, width=700, height=300)
+        else:
+            st.success("✅ You are not near any listed risk zones.")
+    else:
+        st.info("No nearby zone found.")
+
+# -----------------------
+# Route
+# -----------------------
+if st.session_state.page == "landing":
+    landing_page()
+else:
+    main_page()
